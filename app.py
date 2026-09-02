@@ -4,18 +4,19 @@ from __future__ import annotations
 
 import html
 import os
+import pickle
 import textwrap
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import requests
 import streamlit as st
+from streamlit.errors import StreamlitSecretNotFoundError
 
+from posters import PosterLookupError, request_poster
 from recommender import MovieRecommender, Recommendation
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-POSTER_BASE_URL = "https://image.tmdb.org/t/p/w500"
-TMDB_MOVIE_URL = "https://api.themoviedb.org/3/movie/{movie_id}"
 
 
 st.set_page_config(
@@ -34,7 +35,7 @@ def _tmdb_api_key() -> str:
 
     try:
         return str(st.secrets.get("TMDB_API_KEY", "")).strip()
-    except (FileNotFoundError, KeyError):
+    except (FileNotFoundError, KeyError, StreamlitSecretNotFoundError):
         return ""
 
 
@@ -43,24 +44,18 @@ def load_recommender() -> MovieRecommender:
     return MovieRecommender.from_file(PROJECT_ROOT / "movies_dict.pkl")
 
 
-@st.cache_data(ttl=86_400, show_spinner=False)
+@st.cache_data(ttl=86_400, max_entries=5000, show_spinner=False)
 def fetch_poster(movie_id: int, api_key: str) -> str | None:
-    """Return a TMDB poster URL, or None when it cannot be fetched."""
-    if not api_key:
-        return None
+    # Streamlit caches returned values, but not raised exceptions. A temporary
+    # TMDB failure can therefore be retried immediately.
+    return request_poster(movie_id, api_key)
 
+
+def poster_result(movie_id: int, api_key: str) -> tuple[str | None, str | None]:
     try:
-        response = requests.get(
-            TMDB_MOVIE_URL.format(movie_id=movie_id),
-            params={"api_key": api_key, "language": "en-US"},
-            timeout=6,
-        )
-        response.raise_for_status()
-        poster_path = response.json().get("poster_path")
-    except (requests.RequestException, ValueError):
-        return None
-
-    return f"{POSTER_BASE_URL}{poster_path}" if poster_path else None
+        return fetch_poster(movie_id, api_key), None
+    except PosterLookupError as exc:
+        return None, str(exc)
 
 
 def movie_card(recommendation: Recommendation, poster_url: str | None) -> str:
@@ -98,11 +93,30 @@ def movie_card(recommendation: Recommendation, poster_url: str | None) -> str:
 
 
 def render_cards(recommendations: list[Recommendation], api_key: str) -> None:
+    if api_key:
+        with st.spinner("Loading posters..."):
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                posters = list(executor.map(
+                    lambda item: poster_result(item.movie_id, api_key), recommendations
+                ))
+    else:
+        posters = [(None, None)] * len(recommendations)
+
     cards = [
-        movie_card(item, fetch_poster(item.movie_id, api_key))
-        for item in recommendations
+        movie_card(item, poster_url)
+        for item, (poster_url, _) in zip(recommendations, posters)
     ]
     st.markdown(f'<div class="movie-grid">{"".join(cards)}</div>', unsafe_allow_html=True)
+    if not api_key:
+        st.info(
+            "Posters need a TMDB API key. On Streamlit Cloud, add TMDB_API_KEY "
+            "under Manage app → Settings → Secrets. Recommendations work without it."
+        )
+    errors = list(dict.fromkeys(error for _, error in posters if error))
+    if errors:
+        st.warning(" ".join(errors))
+        if st.button("Retry posters", key="retry_posters"):
+            st.rerun()
 
 
 def inject_styles() -> None:
@@ -126,7 +140,7 @@ def inject_styles() -> None:
             color: var(--ink);
         }
 
-        [data-testid="stHeader"] { display: none; }
+        [data-testid="stHeader"] { background: rgba(8, 10, 15, 0.96); }
         [data-testid="stMainBlockContainer"] {
             max-width: 1240px;
             padding-top: 3.5rem;
@@ -210,13 +224,13 @@ def inject_styles() -> None:
             border-radius: 16px;
             display: grid;
             gap: 1.4rem;
-            grid-template-columns: minmax(0, 1fr) auto;
+            grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
             margin-top: 1rem;
             padding: 1.25rem 1.35rem;
         }
         .selection-card h2 { color: var(--ink); font-size: 1.25rem; margin: 0; }
         .selection-card p { color: #b8b6bc; line-height: 1.55; margin: 0.55rem 0 0; }
-        .selection-facts { color: var(--accent); font-size: 0.86rem; white-space: nowrap; }
+        .selection-facts { color: var(--accent); font-size: 0.86rem; overflow-wrap: anywhere; }
 
         .movie-grid {
             display: grid;
@@ -288,7 +302,7 @@ def inject_styles() -> None:
             .movie-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
         }
         @media (max-width: 640px) {
-            [data-testid="stMainBlockContainer"] { padding-top: 1.5rem; }
+            [data-testid="stMainBlockContainer"] { padding-top: 3.5rem; }
             .hero h1 { font-size: 3.4rem; }
             .movie-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .selection-card { grid-template-columns: 1fr; }
@@ -308,17 +322,24 @@ def inject_styles() -> None:
 
 def main() -> None:
     inject_styles()
-    recommender = load_recommender()
+    try:
+        recommender = load_recommender()
+    except (OSError, ValueError, ImportError, pickle.UnpicklingError, EOFError):
+        st.error(
+            "The movie catalogue could not be loaded. Run `python build_model.py` "
+            "with the project dependencies installed, then commit movies_dict.pkl and reboot the app."
+        )
+        st.stop()
     api_key = _tmdb_api_key()
 
     st.markdown(
-        """
+        f"""
         <header class="hero">
             <p class="eyebrow">Content-based movie discovery</p>
             <h1>Find your next <em>watch.</em></h1>
             <p class="hero-copy">
                 Choose a film you already like. FrameFinder compares its story,
-                genres, cast, keywords, and director with 4,800 other titles.
+                genres, cast, keywords, and director across {len(recommender.movie_ids):,} titles.
             </p>
         </header>
         """,
@@ -342,6 +363,10 @@ def main() -> None:
         st.session_state["selected_movie_id"] = selected_id
 
     active_id = st.session_state.get("selected_movie_id")
+    if active_id is not None and active_id not in recommender.movie_ids:
+        st.session_state.pop("selected_movie_id", None)
+        st.info("The catalogue changed. Pick a movie to see fresh recommendations.")
+        active_id = None
     if active_id is not None:
         selected = recommender.movie(active_id)
         overview = html.escape(selected.overview or "No overview is available for this title.")

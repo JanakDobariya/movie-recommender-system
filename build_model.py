@@ -1,4 +1,4 @@
-"""Build the movie table and similarity matrix from the two TMDB CSV files."""
+"""Build the movie catalogue from the two TMDB CSV files."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ def parse_names(value: str, limit: int | None = None) -> list[str]:
         return []
     records = ast.literal_eval(value)
     names = [str(record["name"]) for record in records if record.get("name")]
-    return names[:limit] if limit else names
+    return names[:limit] if limit is not None else names
 
 
 def parse_director(value: str) -> list[str]:
