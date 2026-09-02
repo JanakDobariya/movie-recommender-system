@@ -3,7 +3,6 @@
 .streamlit/secrets.toml
 .playwright-cli/
 output/
-tests/
 movies.pkl
 similarity.pkl
 __pycache__/
