@@ -8,7 +8,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.sparse import csr_matrix
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -41,7 +40,7 @@ class Recommendation(Movie):
     score: float
 
 
-def vectorize_tags(tags: pd.Series) -> tuple[csr_matrix, int]:
+def vectorize_tags(tags: pd.Series) -> tuple[object, int]:
     """Create the sparse feature matrix used by the app and build script."""
     vectorizer = TfidfVectorizer(
         max_features=10_000,
