@@ -5,6 +5,7 @@
 output/
 tests/
 movies.pkl
+similarity.pkl
 __pycache__/
 .pytest_cache/
 .venv/

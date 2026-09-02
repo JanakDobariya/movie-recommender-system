@@ -40,10 +40,7 @@ def _tmdb_api_key() -> str:
 
 @st.cache_resource(show_spinner="Loading the recommendation model...")
 def load_recommender() -> MovieRecommender:
-    return MovieRecommender.from_files(
-        PROJECT_ROOT / "movies_dict.pkl",
-        PROJECT_ROOT / "similarity.pkl",
-    )
+    return MovieRecommender.from_file(PROJECT_ROOT / "movies_dict.pkl")
 
 
 @st.cache_data(ttl=86_400, show_spinner=False)

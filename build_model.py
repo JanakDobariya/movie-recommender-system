@@ -8,10 +8,9 @@ import pickle
 import re
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import linear_kernel
+
+from recommender import vectorize_tags
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -93,41 +92,33 @@ def prepare_movies(movies_csv: Path, credits_csv: Path) -> pd.DataFrame:
     return prepared
 
 
-def calculate_similarity(tags: pd.Series) -> tuple[np.ndarray, int]:
-    vectorizer = TfidfVectorizer(
-        max_features=10_000,
-        min_df=2,
-        ngram_range=(1, 2),
-        stop_words="english",
-        sublinear_tf=True,
-        dtype=np.float32,
-    )
-    vectors = vectorizer.fit_transform(tags)
-    similarity = linear_kernel(vectors, vectors).astype(np.float32, copy=False)
-    np.fill_diagonal(similarity, 1.0)
-    return similarity, len(vectorizer.get_feature_names_out())
-
-
-def save_artifacts(movies: pd.DataFrame, similarity: np.ndarray, output_dir: Path) -> None:
+def save_artifact(movies: pd.DataFrame, output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     with (output_dir / "movies_dict.pkl").open("wb") as movie_file:
         pickle.dump(movies.to_dict(orient="list"), movie_file, protocol=pickle.HIGHEST_PROTOCOL)
-    with (output_dir / "movies.pkl").open("wb") as legacy_movie_file:
-        pickle.dump(movies, legacy_movie_file, protocol=pickle.HIGHEST_PROTOCOL)
-    with (output_dir / "similarity.pkl").open("wb") as similarity_file:
-        pickle.dump(similarity, similarity_file, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def source_file(data_dir: Path, filename: str) -> Path:
+    """Prefer the compressed source file while supporting older local copies."""
+    compressed = data_dir / f"{filename}.gz"
+    if compressed.exists():
+        return compressed
+    uncompressed = data_dir / filename
+    if uncompressed.exists():
+        return uncompressed
+    raise FileNotFoundError(f"Missing {compressed.name} or {uncompressed.name}")
 
 
 def build(data_dir: Path = PROJECT_ROOT / "Data", output_dir: Path = PROJECT_ROOT) -> None:
     movies = prepare_movies(
-        data_dir / "tmdb_5000_movies.csv",
-        data_dir / "tmdb_5000_credits.csv",
+        source_file(data_dir, "tmdb_5000_movies.csv"),
+        source_file(data_dir, "tmdb_5000_credits.csv"),
     )
-    similarity, feature_count = calculate_similarity(movies["tags"])
-    save_artifacts(movies, similarity, output_dir)
+    feature_matrix, feature_count = vectorize_tags(movies["tags"])
+    save_artifact(movies, output_dir)
     print(
         f"Built {len(movies):,} movies with {feature_count:,} TF-IDF features. "
-        f"Similarity matrix: {similarity.shape}, {similarity.dtype}."
+        f"Sparse feature matrix: {feature_matrix.shape}, {feature_matrix.dtype}."
     )
 
 

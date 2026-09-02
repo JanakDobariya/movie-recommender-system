@@ -8,6 +8,9 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy.sparse import csr_matrix
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 
 REQUIRED_COLUMNS = {
@@ -38,10 +41,24 @@ class Recommendation(Movie):
     score: float
 
 
+def vectorize_tags(tags: pd.Series) -> tuple[csr_matrix, int]:
+    """Create the sparse feature matrix used by the app and build script."""
+    vectorizer = TfidfVectorizer(
+        max_features=10_000,
+        min_df=2,
+        ngram_range=(1, 2),
+        stop_words="english",
+        sublinear_tf=True,
+        dtype=np.float32,
+    )
+    matrix = vectorizer.fit_transform(tags.fillna("").astype(str)).tocsr()
+    return matrix, len(vectorizer.get_feature_names_out())
+
+
 class MovieRecommender:
     """Read-only content-based movie recommender."""
 
-    def __init__(self, movies: pd.DataFrame, similarity: np.ndarray) -> None:
+    def __init__(self, movies: pd.DataFrame) -> None:
         missing = REQUIRED_COLUMNS.difference(movies.columns)
         if missing:
             raise ValueError(f"Movie data is missing columns: {sorted(missing)}")
@@ -49,16 +66,8 @@ class MovieRecommender:
             raise ValueError("Movie data is empty")
         if movies["movie_id"].duplicated().any():
             raise ValueError("Movie IDs must be unique")
-        if similarity.shape != (len(movies), len(movies)):
-            raise ValueError(
-                "Similarity matrix shape does not match the movie table: "
-                f"{similarity.shape} versus {len(movies)} rows"
-            )
-        if not np.isfinite(similarity).all():
-            raise ValueError("Similarity matrix contains non-finite values")
-
         self._movies = movies.reset_index(drop=True).copy()
-        self._similarity = similarity
+        self._features, self.feature_count = vectorize_tags(self._movies["tags"])
         self._index_by_id = {
             int(movie_id): index
             for index, movie_id in enumerate(self._movies["movie_id"])
@@ -67,16 +76,14 @@ class MovieRecommender:
         self._duplicate_titles = set(title_counts[title_counts > 1].index)
 
     @classmethod
-    def from_files(cls, movies_path: Path, similarity_path: Path) -> "MovieRecommender":
+    def from_file(cls, movies_path: Path) -> "MovieRecommender":
         # These artifacts are produced locally by build_model.py. Pickle files from
         # unknown sources must not be loaded because pickle can execute code.
         with movies_path.open("rb") as movies_file:
             movie_data = pickle.load(movies_file)
-        with similarity_path.open("rb") as similarity_file:
-            similarity = pickle.load(similarity_file)
 
         movies = movie_data if isinstance(movie_data, pd.DataFrame) else pd.DataFrame(movie_data)
-        return cls(movies, np.asarray(similarity))
+        return cls(movies)
 
     @property
     def movie_ids(self) -> list[int]:
@@ -108,7 +115,10 @@ class MovieRecommender:
             raise ValueError("Recommendation limit must be at least 1")
 
         selected_index = self._index(movie_id)
-        scores = self._similarity[selected_index]
+        scores = cosine_similarity(
+            self._features[selected_index],
+            self._features,
+        ).ravel()
         popularity = self._movies["popularity"].to_numpy(dtype=float)
         candidates = np.arange(len(self._movies))
         candidates = candidates[candidates != selected_index]
