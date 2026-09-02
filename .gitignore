@@ -1,0 +1,11 @@
+.DS_Store
+.env
+.streamlit/secrets.toml
+.playwright-cli/
+output/
+tests/
+movies.pkl
+__pycache__/
+.pytest_cache/
+.venv/
+*.py[cod]
