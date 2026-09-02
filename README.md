@@ -2,6 +2,10 @@
 
 FrameFinder is a content-based movie recommender built with the TMDB 5000 dataset. Pick a film and the app returns five titles with similar stories, genres, keywords, cast members, and directors.
 
+## Live demo
+
+[Open FrameFinder on Streamlit](https://movie-recommendation-system31.streamlit.app/)
+
 The model does not use ratings to decide what to recommend. It creates TF-IDF vectors from each film's metadata and compares them with cosine similarity. Ratings and popularity are shown as context only. Popularity breaks an exact similarity tie.
 
 ## Run the app
