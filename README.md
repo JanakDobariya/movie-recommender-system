@@ -10,7 +10,7 @@ The model does not use ratings to decide what to recommend. It creates a sparse 
 
 ## Run the app
 
-Create a virtual environment and install the pinned dependencies:
+Use Python 3.12 or newer. Create a virtual environment and install the pinned dependencies:
 
 ```bash
 python3 -m venv .venv
@@ -25,6 +25,15 @@ Start Streamlit from the project directory:
 ```bash
 streamlit run app.py
 ```
+
+## Smoke tests
+
+```bash
+python -m unittest discover -s tests
+```
+
+The tests check the saved movie data, recommendation results, and the Streamlit
+form. They do not require a TMDB API key.
 
 ## Rebuild the model
 
